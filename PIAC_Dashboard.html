@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PIAC — Bearing Health Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #111118;
+    --card:     #16161f;
+    --border:   #23232e;
+    --text:     #e8e8f0;
+    --muted:    #6b6b80;
+    --accent:   #33ccff;
+    --green:    #1db870;
+    --yellow:   #f0a020;
+    --red:      #e83040;
+    --wear:     #f0a020;
+    --score:    #33ccff;
+    --thresh:   #aaaa60;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  #conn-status {
+    font-size: 12px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  #conn-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); transition: background .3s;
+  }
+  #conn-dot.live { background: var(--green); }
+
+  /* ── Layout ── */
+  main { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Unit selector ── */
+  .unit-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .unit-bar label { font-size: 12px; color: var(--muted); }
+  #unit-select {
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  #refresh-rate {
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  #last-update { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+  /* ── Status cards ── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .card .value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .card .sub   { font-size: 11px; color: var(--muted); }
+  .card.rag-green { border-color: var(--green); }
+  .card.rag-yellow { border-color: var(--yellow); }
+  .card.rag-red   { border-color: var(--red); box-shadow: 0 0 12px rgba(232,48,64,.25); }
+
+  /* ── RAG badge ── */
+  .rag-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600;
+    padding: 6px 14px; border-radius: 20px;
+  }
+  .rag-badge.green  { background: rgba(29,184,112,.15); color: var(--green); }
+  .rag-badge.yellow { background: rgba(240,160,32,.15);  color: var(--yellow); }
+  .rag-badge.red    { background: rgba(232,48,64,.20);   color: var(--red);
+                      animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(232,48,64,.4); }
+    50%      { box-shadow: 0 0 0 6px rgba(232,48,64,0); }
+  }
+  .rag-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .green  .rag-dot { background: var(--green); }
+  .yellow .rag-dot { background: var(--yellow); }
+  .red    .rag-dot { background: var(--red); }
+
+  /* ── Wear gauge ── */
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  #wear-gauge-svg { width: 180px; height: 100px; }
+
+  /* ── Chart panels ── */
+  .chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+  .chart-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .chart-panel h3 { font-size: 12px; color: var(--muted); font-weight: 500;
+                    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+  .chart-panel canvas { width: 100% !important; }
+
+  /* ── Alarm log ── */
+  .alarm-log {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .alarm-log h3 { font-size: 12px; color: var(--muted); font-weight: 500;
+                  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+  #alarm-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+  .alarm-entry {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; padding: 6px 10px;
+    background: rgba(232,48,64,.08); border-left: 3px solid var(--red);
+    border-radius: 0 4px 4px 0;
+  }
+  .alarm-entry .ts { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .alarm-entry .msg { color: var(--text); }
+  #no-alarms { color: var(--muted); font-size: 12px; font-style: italic; }
+
+  /* ── Footer ── */
+  footer {
+    padding: 12px 24px; font-size: 11px; color: var(--muted);
+    border-top: 1px solid var(--border); text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PIAC — <span>Bearing Health Monitor</span></h1>
+  <div id="conn-status">
+    <div id="conn-dot"></div>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Unit selector + refresh -->
+  <div class="unit-bar">
+    <label>Unit:</label>
+    <select id="unit-select"><option value="">— loading —</option></select>
+    <label style="margin-left:16px">Refresh:</label>
+    <select id="refresh-rate">
+      <option value="1000">1 s</option>
+      <option value="2000" selected>2 s</option>
+      <option value="5000">5 s</option>
+    </select>
+    <span id="last-update">—</span>
+  </div>
+
+  <!-- Status cards -->
+  <div class="cards">
+    <div class="card" id="card-rag">
+      <div class="label">Status</div>
+      <div class="value" id="val-rag">
+        <span class="rag-badge green"><span class="rag-dot"></span>Normal</span>
+      </div>
+      <div class="sub" id="sub-rag">No alarm</div>
+    </div>
+    <div class="card" id="card-wt">
+      <div class="label">Wear proxy w<sub>t</sub></div>
+      <div class="value" id="val-wt">—</div>
+      <div class="sub">0 = new · 1 = end-of-life</div>
+    </div>
+    <div class="card" id="card-st">
+      <div class="label">PIAC score S<sub>t</sub>⁺</div>
+      <div class="value" id="val-st">—</div>
+      <div class="sub" id="sub-st">Threshold: —</div>
+    </div>
+    <div class="card" id="card-rpm">
+      <div class="label">Speed</div>
+      <div class="value" id="val-rpm">—</div>
+      <div class="sub">RPM</div>
+    </div>
+    <div class="card" id="card-frame">
+      <div class="label">Frames processed</div>
+      <div class="value" id="val-frame">—</div>
+      <div class="sub" id="sub-frame">—</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="chart-grid">
+
+    <div class="chart-panel">
+      <h3>PIAC score vs adaptive threshold h(w<sub>t</sub>)</h3>
+      <canvas id="chart-score" height="200"></canvas>
+    </div>
+
+    <div class="chart-panel">
+      <h3>Wear proxy w<sub>t</sub> · RAG zones</h3>
+      <canvas id="chart-wear" height="200"></canvas>
+    </div>
+
+    <div class="chart-panel">
+      <h3>Threshold closure — h(w<sub>t</sub>) converging on noise floor</h3>
+      <canvas id="chart-thresh" height="200"></canvas>
+    </div>
+
+    <div class="chart-panel">
+      <h3>Score margin — S<sub>t</sub>⁺ / h(w<sub>t</sub>) ratio</h3>
+      <canvas id="chart-margin" height="200"></canvas>
+    </div>
+
+  </div>
+
+  <!-- Alarm log -->
+  <div class="alarm-log">
+    <h3>Alarm log</h3>
+    <div id="alarm-list"><span id="no-alarms">No alarms recorded this session.</span></div>
+  </div>
+
+</main>
+
+<footer>
+  PIAC Framework · Physics-Guided Adaptive CUSUM ·
+  h(w<sub>t</sub>) = h<sub>0</sub> · exp(−γ · w<sub>t</sub>)
+</footer>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────
+const API = 'http://localhost:5000';
+const HISTORY_N = 300;
+let   refreshMs = 2000;
+let   refreshTimer = null;
+let   selectedUnit  = '';
+let   alarmLog = [];
+const MAX_ALARM_LOG = 50;
+
+// ── Chart.js defaults ─────────────────────────────────────────────────────
+Chart.defaults.color          = '#6b6b80';
+Chart.defaults.borderColor    = '#23232e';
+Chart.defaults.font.family    = 'Segoe UI, system-ui, sans-serif';
+Chart.defaults.font.size      = 11;
+Chart.defaults.animation      = false;   // disable for smooth live updates
+Chart.defaults.plugins.legend.display = false;
+
+const chartOpts = (yLabel, yMin, yMax) => ({
+  responsive: true,
+  maintainAspectRatio: true,
+  scales: {
+    x: { display: false },
+    y: {
+      min: yMin, max: yMax,
+      title: { display: !!yLabel, text: yLabel, color: '#6b6b80' },
+      grid: { color: '#1e1e28' },
+      ticks: { maxTicksLimit: 5 }
+    }
+  },
+  plugins: { tooltip: { mode: 'index', intersect: false } }
+});
+
+// Score chart — two datasets: score + threshold
+const ctxScore  = document.getElementById('chart-score').getContext('2d');
+const chartScore = new Chart(ctxScore, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'S_t+', data: [], borderColor: '#33ccff', borderWidth: 1.5,
+        pointRadius: 0, tension: 0.2, fill: false },
+      { label: 'h(w_t)', data: [], borderColor: '#aaaa60', borderWidth: 1.2,
+        borderDash: [4, 3], pointRadius: 0, tension: 0.2, fill: false }
+    ]
+  },
+  options: { ...chartOpts('', 0, null),
+    plugins: { ...chartOpts().plugins,
+      legend: { display: true, labels: { color: '#6b6b80', boxWidth: 14 } } }
+  }
+});
+
+// Wear chart — one dataset + annotation zones via background gradient
+const ctxWear  = document.getElementById('chart-wear').getContext('2d');
+const chartWear = new Chart(ctxWear, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{ label: 'w_t', data: [], borderColor: '#f0a020', borderWidth: 1.5,
+      pointRadius: 0, tension: 0.3, fill: 'origin',
+      backgroundColor: 'rgba(240,160,32,0.08)' }]
+  },
+  options: { ...chartOpts('w_t', 0, 1) }
+});
+
+// Threshold chart — shows h(w_t) closing toward 0 over time
+const ctxThresh  = document.getElementById('chart-thresh').getContext('2d');
+const chartThresh = new Chart(ctxThresh, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{ label: 'h(w_t)', data: [], borderColor: '#aaaa60', borderWidth: 1.5,
+      pointRadius: 0, tension: 0.3, fill: 'end',
+      backgroundColor: 'rgba(170,170,96,0.06)' }]
+  },
+  options: { ...chartOpts('h(w_t)', 0, null) }
+});
+
+// Margin chart — ratio score/threshold; >1 = alarm zone
+const ctxMargin  = document.getElementById('chart-margin').getContext('2d');
+const chartMargin = new Chart(ctxMargin, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{ label: 'S_t+ / h(w_t)', data: [], borderColor: '#cc44ff',
+      borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false }]
+  },
+  options: { ...chartOpts('ratio', 0, null) }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function setConnected(ok) {
+  document.getElementById('conn-dot').className   = ok ? 'live' : '';
+  document.getElementById('conn-label').textContent = ok ? 'Live' : 'Disconnected';
+}
+
+function ragClass(rag) {
+  return rag === 'red' ? 'red' : rag === 'yellow' ? 'yellow' : 'green';
+}
+function ragLabel(rag) {
+  return rag === 'red' ? 'ALARM' : rag === 'yellow' ? 'Warning' : 'Normal';
+}
+
+function fmtTs(ts) {
+  return new Date(ts * 1000).toLocaleTimeString();
+}
+
+function pushToChart(chart, labels, ...dataArrays) {
+  chart.data.labels = labels;
+  dataArrays.forEach((arr, i) => { chart.data.datasets[i].data = arr; });
+  chart.update('none');
+}
+
+// ── Unit list ─────────────────────────────────────────────────────────────
+async function refreshUnits() {
+  try {
+    const res   = await fetch(`${API}/api/units`);
+    const units = await res.json();
+    const sel   = document.getElementById('unit-select');
+    const prev  = sel.value;
+    sel.innerHTML = units.map(u => `<option value="${u}">${u}</option>`).join('');
+    if (units.includes(prev)) sel.value = prev;
+    else if (units.length)    { sel.value = units[0]; selectedUnit = units[0]; }
+  } catch (_) {}
+}
+
+// ── Latest status cards ───────────────────────────────────────────────────
+async function refreshLatest() {
+  try {
+    const res  = await fetch(`${API}/api/latest`);
+    const data = await res.json();
+    const m    = data[selectedUnit];
+    if (!m) return;
+
+    const rag = m.rag || 'green';
+    const rc  = ragClass(rag);
+
+    // RAG card
+    document.getElementById('val-rag').innerHTML =
+      `<span class="rag-badge ${rc}"><span class="rag-dot"></span>${ragLabel(rag)}</span>`;
+    document.getElementById('sub-rag').textContent =
+      m.alarm ? `Alarm at frame ${m.frame}` : 'No active alarm';
+    document.getElementById('card-rag').className = `card rag-${rc}`;
+
+    // Metric cards
+    document.getElementById('val-wt').textContent   = m.w_t.toFixed(4);
+    document.getElementById('val-st').textContent   = m.St_plus.toFixed(3);
+    document.getElementById('sub-st').textContent   = `Threshold: ${m.h_wt.toFixed(3)}`;
+    document.getElementById('val-rpm').textContent  = Math.round(m.rpm || 1797);
+    document.getElementById('val-frame').textContent = (m.frame || 0).toLocaleString();
+    document.getElementById('sub-frame').textContent =
+      `Last update: ${fmtTs(m.ts)}`;
+
+    // Colour wear card by zone
+    const wCard = document.getElementById('card-wt');
+    wCard.className = `card rag-${m.w_t > 0.7 ? 'red' : m.w_t > 0.3 ? 'yellow' : 'green'}`;
+
+    // Alarm log
+    if (m.alarm) {
+      const entry = { ts: m.ts, frame: m.frame, St_plus: m.St_plus,
+                      h_wt: m.h_wt, w_t: m.w_t };
+      if (!alarmLog.length || alarmLog[0].frame !== entry.frame) {
+        alarmLog.unshift(entry);
+        if (alarmLog.length > MAX_ALARM_LOG) alarmLog.pop();
+        renderAlarmLog();
+      }
+    }
+
+    document.getElementById('last-update').textContent =
+      `Updated ${new Date().toLocaleTimeString()}`;
+    setConnected(true);
+  } catch (_) {
+    setConnected(false);
+  }
+}
+
+function renderAlarmLog() {
+  const list = document.getElementById('alarm-list');
+  if (!alarmLog.length) {
+    list.innerHTML = '<span id="no-alarms">No alarms recorded this session.</span>';
+    return;
+  }
+  list.innerHTML = alarmLog.map(a =>
+    `<div class="alarm-entry">
+       <span class="ts">${fmtTs(a.ts)}</span>
+       <span class="msg">
+         Frame ${a.frame} — S_t⁺ ${a.St_plus.toFixed(3)} > h(w_t) ${a.h_wt.toFixed(3)}
+         · w_t ${a.w_t.toFixed(4)}
+       </span>
+     </div>`
+  ).join('');
+}
+
+// ── History charts ────────────────────────────────────────────────────────
+async function refreshHistory() {
+  if (!selectedUnit) return;
+  try {
+    const res    = await fetch(`${API}/api/history?unit=${selectedUnit}&n=${HISTORY_N}`);
+    const frames = await res.json();
+    if (!frames.length) return;
+
+    const labels  = frames.map((_, i) => i);
+    const scores  = frames.map(f => f.St_plus  ?? 0);
+    const threshs = frames.map(f => f.h_wt     ?? 0);
+    const wears   = frames.map(f => f.w_t      ?? 0);
+    const margins = frames.map(f => f.h_wt > 0 ? f.St_plus / f.h_wt : 0);
+
+    pushToChart(chartScore,  labels, scores, threshs);
+    pushToChart(chartWear,   labels, wears);
+    pushToChart(chartThresh, labels, threshs);
+    pushToChart(chartMargin, labels, margins);
+
+    // Dynamic y-axis max for score chart
+    const maxScore = Math.max(...scores, ...threshs, 1);
+    chartScore.options.scales.y.max = Math.ceil(maxScore * 1.2);
+    chartScore.update('none');
+
+  } catch (_) {}
+}
+
+// ── Poll loop ─────────────────────────────────────────────────────────────
+async function tick() {
+  await Promise.all([refreshLatest(), refreshHistory()]);
+}
+
+function startPolling() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  tick();
+  refreshTimer = setInterval(tick, refreshMs);
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────
+document.getElementById('unit-select').addEventListener('change', e => {
+  selectedUnit = e.target.value;
+  tick();
+});
+
+document.getElementById('refresh-rate').addEventListener('change', e => {
+  refreshMs = parseInt(e.target.value);
+  startPolling();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+(async () => {
+  await refreshUnits();
+  selectedUnit = document.getElementById('unit-select').value;
+  startPolling();
+  // Re-fetch unit list every 30s in case new units come online
+  setInterval(refreshUnits, 30000);
+})();
+</script>
+</body>
+</html>
